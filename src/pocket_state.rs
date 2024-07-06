@@ -1,8 +1,10 @@
 mod data_store;
-
-use std::{sync::Arc};
-
-use tokio::{io::{AsyncReadExt, AsyncWriteExt, BufReader}, net::{TcpListener, TcpStream}, sync::Mutex};
+use std::sync::Arc;
+use tokio::{
+    io::{AsyncReadExt, AsyncWriteExt, BufReader},
+    net::{TcpListener, TcpStream},
+    sync::Mutex
+};
 
 type SharedConnections = Arc<Mutex<Vec<Arc<Mutex<TcpStream>>>>>;
 
@@ -63,14 +65,12 @@ impl<'a> Pocket<'a> {
         println!("{:?}", connection_count);
         let s_clone = s.clone();
         let c_clone = connections.clone();
-        tokio::spawn(async move {
-            Self::handle_messages(s_clone).await;
-            {
-                let mut c = c_clone.lock().await;
-                c.retain(|x| !Arc::ptr_eq(x, &s));
-                println!("Connections: {:?}", c);
-            }
-        });
+        Self::handle_messages(s_clone).await;
+        {
+            let mut c = c_clone.lock().await;
+            c.retain(|x| !Arc::ptr_eq(x, &s));
+            println!("Connections: {:?}", c);
+        }
     }
 
     async fn handle_messages(s: Arc<Mutex<TcpStream>>) {
@@ -99,6 +99,17 @@ impl<'a> Pocket<'a> {
                 let cc = self.connection_count.clone();
                 let s = Arc::new(Mutex::new(socket));
                 let connections_clone = self.connections.clone();
+                if self.connections
+                    .lock()
+                    .await
+                    .len() >= usize::try_from(self.config.max_connections).unwrap() {
+                    let socket_to_shutdown = s.clone();
+                    let _ = socket_to_shutdown
+                        .lock()
+                        .await
+                        .shutdown();
+                    continue;
+                }
                 {
                     let mut c = self.connections.lock().await;
                     (*c).push(s.clone());
