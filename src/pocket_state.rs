@@ -1,7 +1,10 @@
 mod data_store;
 
-use std::sync::{Arc, Mutex};
-use tokio::net::{TcpListener, TcpStream};
+use std::sync::{Arc};
+
+use tokio::{io::{AsyncReadExt, AsyncWriteExt}, net::{TcpListener, TcpStream}, sync::Mutex};
+
+type SharedConnections = Arc<Mutex<Vec<Arc<Mutex<TcpStream>>>>>;
 
 #[derive(Debug)]
 pub struct PocketConfig<'a> {
@@ -36,7 +39,7 @@ pub struct Pocket<'a> {
     pub config: PocketConfig<'a>,
     server: Option<TcpListener>,
     connection_count: Arc<Mutex<u32>>,
-    connections: Vec<Arc<Mutex<TcpStream>>>
+    connections: SharedConnections
 }
 
 impl<'a> Default for Pocket<'a> {
@@ -46,18 +49,45 @@ impl<'a> Default for Pocket<'a> {
             config: PocketConfig::default(),
             server: None,
             connection_count: Arc::new(Mutex::new(0)),
-            connections: vec![]
+            connections: Arc::new(Mutex::new(vec![]))
         }
     }
 }
 
 impl<'a> Pocket<'a> {
-    async fn handle_connection(s: Arc<Mutex<TcpStream>>, connection_count: Arc<Mutex<u32>>) {
+    async fn handle_connection(s: Arc<Mutex<TcpStream>>, connection_count: Arc<Mutex<u32>>, connections: SharedConnections) {
         {
-            let mut x = connection_count.lock().unwrap();
+            let mut x = connection_count.lock().await;
             *x += 1;
         }
         println!("{:?}", connection_count);
+        let s_clone = s.clone();
+        let c_clone = connections.clone();
+        tokio::spawn(async move {
+            Self::handle_messages(s_clone).await;
+            {
+                let mut c = c_clone.lock().await;
+                c.retain(|x| !Arc::ptr_eq(x, &s));
+                println!("Connections: {:?}", c);
+            }
+        });
+    }
+
+    async fn handle_messages(s: Arc<Mutex<TcpStream>>) {
+        let s = s.clone();
+        let mut s = s.lock().await;
+        let mut data: Vec<u8> = Vec::new();
+        loop {
+            let (mut reader, _) = s.split();
+            if let Ok(size) = reader.read_to_end(&mut data).await {
+                if size == 0 {
+                    let _ = s.shutdown();
+                }
+                println!("data: {:?}", data);
+                break;
+            }
+        }
+        let _ = s.shutdown();
     }
 
     pub async fn listen(&mut self, listen_addr: &'a str, port: u32) {
@@ -67,9 +97,13 @@ impl<'a> Pocket<'a> {
                 let (socket, _) = server.accept().await.unwrap();
                 let cc = self.connection_count.clone();
                 let s = Arc::new(Mutex::new(socket));
-                self.connections.push(s.clone());
+                let connections_clone = self.connections.clone();
+                {
+                    let mut c = self.connections.lock().await;
+                    (*c).push(s.clone());
+                }
                 tokio::spawn(async move {
-                        Self::handle_connection(s.clone(), cc).await;
+                        Self::handle_connection(s.clone(), cc, connections_clone).await;
                 });
             }
         }
