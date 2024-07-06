@@ -18,7 +18,6 @@ impl<'a> Default for DataStore<'a> {
             hm: HashMap::new()
         } 
     }
-
 }
 
 #[derive(Debug)]
