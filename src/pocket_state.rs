@@ -1,8 +1,8 @@
 mod data_store;
 
-use std::sync::{Arc};
+use std::{sync::Arc};
 
-use tokio::{io::{AsyncReadExt, AsyncWriteExt}, net::{TcpListener, TcpStream}, sync::Mutex};
+use tokio::{io::{AsyncReadExt, AsyncWriteExt, BufReader}, net::{TcpListener, TcpStream}, sync::Mutex};
 
 type SharedConnections = Arc<Mutex<Vec<Arc<Mutex<TcpStream>>>>>;
 
@@ -76,15 +76,16 @@ impl<'a> Pocket<'a> {
     async fn handle_messages(s: Arc<Mutex<TcpStream>>) {
         let s = s.clone();
         let mut s = s.lock().await;
-        let mut data: Vec<u8> = Vec::new();
         loop {
-            let (mut reader, _) = s.split();
-            if let Ok(size) = reader.read_to_end(&mut data).await {
+            let mut data: Vec<u8> = Vec::new();
+            let (reader, _) = s.split();
+            let mut reader = BufReader::new(reader);
+            if let Ok(size) = reader.read_buf(&mut data).await {
                 if size == 0 {
                     let _ = s.shutdown();
+                    break;
                 }
-                println!("data: {:?}", data);
-                break;
+                println!("data: {:?}", String::from_utf8(data));
             }
         }
         let _ = s.shutdown();
