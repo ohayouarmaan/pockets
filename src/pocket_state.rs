@@ -69,7 +69,14 @@ impl<'a> Pocket<'a> {
         {
             let mut c = c_clone.lock().await;
             c.retain(|x| !Arc::ptr_eq(x, &s));
+            // Reduce the connection_count once we are done handling the messages
+            // this is the ending stage of a connecting socket.
+            {
+                let mut x = connection_count.lock().await;
+                *x -= 1;
+            }
             println!("Connections: {:?}", c);
+
         }
     }
 
